@@ -1,0 +1,42 @@
+<!doctype html><meta charset=utf-8><meta name=viewport content="width=device-width,initial-scale=1"><title>ExamShield</title>
+<style>body{font:15px system-ui;max-width:960px;margin:1rem auto;padding:0 1rem}section{border:1px solid #ccc;border-radius:8px;padding:.8rem;margin:.8rem 0}input,select,button,textarea{margin:2px;padding:5px}table{border-collapse:collapse;width:100%}td,th{border-bottom:1px solid #ddd;padding:3px;text-align:left}.bad{color:#b00;font-weight:600}.q{margin:.6rem 0}</style>
+<h1>ExamShield <small id=who></small></h1><div id=app></div>
+<script>
+const $=s=>document.querySelector(s),E=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+async function api(p,m='GET',b){const r=await fetch('/api/'+p,{method:m,headers:{'Content-Type':'application/json'},body:b?JSON.stringify(b):undefined});if(!r.ok){const j=await r.json().catch(()=>({}));throw Error(j.error||r.status)}return r.headers.get('content-type').includes('json')?r.json():r}
+const A=(f)=>async(...a)=>{try{await f(...a)}catch(e){alert(e.message)}};
+let U,es,exam,timer;
+async function boot(){try{U=await api('me');home()}catch{login()}}
+function login(){$('#who').textContent='';$('#app').innerHTML=`<section><h3>Login</h3><input id=u placeholder=username><input id=p type=password placeholder=password><button onclick="doLogin()">Login</button></section>`}
+window.doLogin=A(async()=>{U=await api('login','POST',{username:$('#u').value,password:$('#p').value});home()});
+window.logout=A(async()=>{es&&es.close();await api('logout','POST');login()});
+function home(){$('#who').innerHTML=`${E(U.name)} (${U.role}) <button onclick=logout()>Logout</button>`;({admin:admin,teacher:teacher,student:student})[U.role]()}
+const tbl=(h,rows)=>`<table><tr>${h.map(x=>`<th>${x}</th>`).join('')}</tr>${rows.map(r=>`<tr>${r.map(c=>`<td>${c}</td>`).join('')}</tr>`).join('')}</table>`;
+async function notesHtml(del){const n=await api('notes');return `<section><h3>Notes</h3>${tbl(['Title','Topic','File',''],n.map(x=>[E(x.title),E(x.topic),`<a href="/api/notes/${x.id}/file">${E(x.filename)}</a>`,del?`<button onclick=delNote(${x.id})>x</button>`:'']))}</section>`}
+window.delNote=A(async id=>{await api('notes/'+id,'DELETE');home()});
+async function admin(){const us=await api('users');$('#app').innerHTML=`<section><h3>Add user</h3><input id=nu placeholder=username><input id=np placeholder=password><input id=nn placeholder="full name"><select id=nr><option>student<option>teacher<option>admin</select><input id=pe placeholder="parent email"><button onclick=addUser()>Add</button>${tbl(['User','Name','Role','Parent email'],us.map(u=>[E(u.username),E(u.name),u.role,E(u.parent_email)]))}</section><div id=t></div>`;teacherPanels('#t')}
+window.addUser=A(async()=>{await api('users','POST',{username:$('#nu').value,password:$('#np').value,name:$('#nn').value,role:$('#nr').value,parent_email:$('#pe').value});home()});
+function teacher(){$('#app').innerHTML='<div id=t></div>';teacherPanels('#t')}
+async function teacherPanels(sel){const [qs,ex,res]=await Promise.all([api('questions'),api('exams'),api('results')]);
+$(sel).innerHTML=`<section><h3>Live proctoring</h3><div id=live>Waiting for events...</div></section>
+<section><h3>Question bank</h3><textarea id=qt placeholder=question></textarea><br><input id=o0 placeholder="option A"><input id=o1 placeholder="option B"><input id=o2 placeholder="option C"><input id=o3 placeholder="option D"><select id=qa><option value=0>A<option value=1>B<option value=2>C<option value=3>D</select><input id=qp placeholder=topic><button onclick=addQ()>Add</button>
+${tbl(['ID','Question','Correct',''],qs.map(x=>[x.id,E(x.text),E(x.options[x.answer]),`<button onclick=delQ(${x.id})>x</button>`]))}</section>
+<section><h3>Create exam</h3><input id=et placeholder=title><input id=em type=number value=10 style=width:70px> min <input id=ep type=number value=50 style=width:70px> pass%<div>${qs.map(x=>`<label><input type=checkbox class=qc value=${x.id}>${E(x.text)}</label><br>`).join('')}</div><button onclick=addE()>Create</button>${tbl(['ID','Title','Min','Questions'],ex.map(x=>[x.id,E(x.title),x.minutes,x.count]))}</section>
+<section><h3>Upload notes</h3><input id=nt placeholder=title><input id=ntp placeholder=topic><input id=nf type=file><button onclick=upNote()>Upload</button></section><div id=nl></div>
+<section><h3>Results</h3>${tbl(['Student','Exam','Score','Status','Risk','Report','Parent'],res.map(r=>[E(r.student),E(r.exam),r.score+'/'+r.total,r.status,`<span class="${r.flagged?'bad':''}">${r.risk}${r.flagged?' FLAGGED':''}</span>`,`<a href="/api/attempts/${r.id}/report.pdf">PDF</a>`,`<button onclick=resend(${r.id})>Resend email</button>`]))}</section>`;
+$('#nl').innerHTML=await notesHtml(true);es&&es.close();es=new EventSource('/api/stream');es.onmessage=e=>{const d=JSON.parse(e.data),l=$('#live');if(l.firstChild&&l.firstChild.nodeType==3)l.textContent='';const p=document.createElement('div');p.className=d.flagged?'bad':'';p.textContent=new Date().toLocaleTimeString()+' '+d.type+' '+d.student+' '+(d.kind||d.exam||(d.score+'/'+d.total))+(d.risk?' risk='+d.risk:'');l.prepend(p)}}
+window.addQ=A(async()=>{await api('questions','POST',{text:$('#qt').value,options:[0,1,2,3].map(i=>$('#o'+i).value),answer:+$('#qa').value,topic:$('#qp').value});home()});
+window.delQ=A(async id=>{await api('questions/'+id,'DELETE');home()});
+window.addE=A(async()=>{await api('exams','POST',{title:$('#et').value,minutes:+$('#em').value,pass_pct:+$('#ep').value,qids:[...document.querySelectorAll('.qc:checked')].map(c=>+c.value)});home()});
+window.resend=A(async id=>{const r=await api('attempts/'+id+'/email','POST');alert('Parent email: '+r.status)});
+window.upNote=A(async()=>{const f=$('#nf').files[0];if(!f)throw Error('choose a file');const d=await new Promise(r=>{const x=new FileReader;x.onload=()=>r(x.result.split(',')[1]);x.readAsDataURL(f)});await api('notes','POST',{title:$('#nt').value,topic:$('#ntp').value,filename:f.name,data:d});home()});
+async function student(){const [ex,my]=await Promise.all([api('exams'),api('my/results')]);$('#app').innerHTML=`<section><h3>Exams</h3>${tbl(['Exam','Min','Q',''],ex.map(x=>[E(x.title),x.minutes,x.count,x.attempt?E(x.attempt.status):`<button onclick=begin(${x.id})>Start</button>`]))}</section><section><h3>My results</h3>${tbl(['Exam','Score','Status','Report'],my.map(r=>[E(r.exam),r.score+'/'+r.total,r.status,`<a href="/api/attempts/${r.id}/report.pdf">PDF</a>`]))}</section>`+await notesHtml(false)}
+window.begin=A(async id=>{try{await document.documentElement.requestFullscreen()}catch{}exam=await api('exams/'+id+'/start','POST');let left=exam.minutes*60;
+$('#app').innerHTML=`<section><h3>${E(exam.title)} <span id=clk></span></h3>${exam.questions.map((q,i)=>`<div class=q><b>${i+1}. ${E(q.text)}</b><br>${q.options.map((o,j)=>`<label><input type=radio name=q${q.id} value=${j}> ${E(o)}</label><br>`).join('')}</div>`).join('')}<button onclick=finish()>Submit</button></section>`;
+const sig=(k,d)=>exam&&api(`attempts/${exam.attempt}/signal`,'POST',{kind:k,detail:d}).catch(()=>{});
+document.onvisibilitychange=()=>document.hidden&&sig('tab_hidden');window.onblur=()=>sig('window_blur');document.oncopy=()=>sig('copy');document.onpaste=()=>sig('paste');document.oncontextmenu=e=>{e.preventDefault();sig('context_menu')};document.onfullscreenchange=()=>!document.fullscreenElement&&sig('fullscreen_exit');
+timer=setInterval(()=>{left--;$('#clk').textContent=Math.floor(left/60)+':'+String(left%60).padStart(2,'0');if(left<=0)finish()},1000)});
+window.finish=A(async()=>{if(!exam)return;clearInterval(timer);const a={};exam.questions.forEach(q=>{const c=document.querySelector(`input[name=q${q.id}]:checked`);if(c)a[q.id]=+c.value});const id=exam.attempt;exam=null;document.onvisibilitychange=window.onblur=document.oncopy=document.onpaste=document.oncontextmenu=document.onfullscreenchange=null;
+const r=await api(`attempts/${id}/submit`,'POST',{answers:a});if(document.fullscreenElement)document.exitFullscreen();alert(`Score ${r.score}/${r.total} - ${r.pass?'PASS':'FAIL'}. Result emailed to parent: ${r.parent_email}`);home()});
+boot();
+</script>
